@@ -3,51 +3,82 @@ const usersSchema = require("../models/user");
 const jwt = require("jsonwebtoken");
 const router = express.Router();
 // creating endpoint for user login
+const SECRET_KEY = 'your-secret-key';
 
-router.post("/signup", async (req, res) => {
-  console.log(req.body);
-  let check = await usersSchema.findOne({ email: req.body.email });
-  if (check) {
-    return res.status(400).json({
-      success: false,
-      errors: "existing user found with same email address.",
-    });
-  } else {
-    const user = await usersSchema.create({
-      username: req.body.username,
-      email: req.body.email,
-      password: req.body.password,
-    });
-
-    const data = {
-      user: {
-        id: user._id,
-      },
-    };
-    const token = jwt.sign(data, "secret_ecom");
-    res.json({ success: true, token });
-  }
+router.get('/', (req, res) => {
+  res.status(200).send('Welcome to home');
 });
 
-router.post("/login", async (req, res) => {
-  let user = await usersSchema.findOne({ email: req.body.email });
-  if (user) {
-    const passCompare = req.body.password === user.password;
-    if (passCompare) {
-      const data = {
-        user: {
-          id: user._id,
-        },
-      };
-
-      const token = jwt.sign(data, "secret_ecom");
-      res.json({ success: true, token });
-    } else {
-      res.json({ success: false, errors: "Wrong password" });
+router.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  console.log(">>>>>>>>>>>>>>body",req.body)
+  try {
+    // Check if the user exists
+    const user = await usersSchema.findOne({ username });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
-  } else {
-    res.json({ success: false, errors: "Wrong email id" });
+    // Verify password
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ message: 'Invalid password' });
+    }
+    // Generate JWT token
+    const token = jwt.sign({ userId: user._id, role: user.role }, SECRET_KEY);
+    res.status(200).json({ token });
+  } catch (error) {
+    console.error('Error logging in:', error);
+    res.status(500).json({ message: 'Internal server error' });
   }
 });
+
+router.post('/register', async (req, res) => {
+  const { username, password, role } = req.body;
+  console.log(">>>>>>>>>>>>>>>>>>>>.req.body",req.body);
+  try {
+    // Check if the user already exists
+    const existingUser = await usersSchema.findOne({ username });
+    console.log(">>>>>>>>",existingUser);
+    if (existingUser) {
+      return res.status(400).json({ message: 'Username already exists' });
+    }
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    // Create a new user
+    const newUser = new usersSchema({ username, password: hashedPassword, role });
+    await newUser.save();
+    res.status(201).json({ message: 'User registered successfully' });
+  } catch (error) {
+    console.error('Error registering user:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization;
+  if (!token) {
+    return res.status(401).send('Access denied. Token is missing');
+  }
+
+  try {
+    const decoded = jwt.verify(token, SECRET_KEY);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(403).send('Invalid token');
+  }
+};
+router.get('/admin', verifyToken, (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).send('Access denied. Admin access required');
+  }
+  res.status(200).send('Welcome to admin panel');
+});
+
+router.get('/home', verifyToken, (req, res) => {
+  res.status(200).send('Welcome to home');
+});
+
+
 
 module.exports = router;
